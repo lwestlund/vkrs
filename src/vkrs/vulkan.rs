@@ -8,11 +8,47 @@ use std::{
     os::raw::{c_char, c_void},
 };
 
+struct QueueFamilyIndices {
+    pub graphics_family: Option<u32>,
+}
+
+impl QueueFamilyIndices {
+    pub fn new() -> Self {
+        let graphics_family = None;
+        Self { graphics_family }
+    }
+
+    pub fn find_queue_families(
+        instance: &ash::Instance,
+        device: vk::PhysicalDevice,
+    ) -> QueueFamilyIndices {
+        let queue_families =
+            unsafe { instance.get_physical_device_queue_family_properties(device) };
+        let mut indices = Self::new();
+        for (idx, queue_family) in queue_families.iter().enumerate() {
+            if queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                indices.graphics_family = Some(idx as u32);
+            }
+
+            if indices.is_complete() {
+                break;
+            }
+        }
+
+        indices
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.graphics_family.is_some()
+    }
+}
+
 pub struct VkData {
     _entry: ash::Entry,
     instance: ash::Instance,
     debug_utils_loader: ash::extensions::ext::DebugUtils,
     debug_messenger: vk::DebugUtilsMessengerEXT,
+    _physical_device: vk::PhysicalDevice,
 }
 
 fn create_instance(name: &str, version: u32, entry: &ash::Entry) -> ash::Instance {
@@ -124,6 +160,70 @@ fn setup_debug_messenger(
     (debug_utils_loader, debug_messenger)
 }
 
+fn rate_physical_device(instance: &ash::Instance, device: vk::PhysicalDevice) -> u32 {
+    let device_featues = unsafe { instance.get_physical_device_features(device) };
+    if device_featues.geometry_shader != 1 {
+        return 0;
+    }
+
+    let indices = QueueFamilyIndices::find_queue_families(instance, device);
+    if !indices.is_complete() {
+        return 0;
+    }
+
+    let mut score = 0;
+    let device_properties = unsafe { instance.get_physical_device_properties(device) };
+    if device_properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
+        score += 1000;
+    } else if device_properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU {
+        score += 100;
+    }
+    score += device_properties.limits.max_image_dimension2_d;
+
+    score
+}
+
+fn select_physical_device(instance: &ash::Instance) -> vk::PhysicalDevice {
+    let devices = unsafe {
+        instance
+            .enumerate_physical_devices()
+            .expect("Failed to enumerate physical devices.")
+    };
+    log::debug!(target: "vulkan", "Available devices:");
+    devices.iter().for_each(|device| {
+        log::debug!(
+            target: "vulkan",
+            "\t{:?}",
+            unsafe {
+                CStr::from_ptr(instance
+                               .get_physical_device_properties(*device)
+                               .device_name
+                               .as_ptr()
+                ) })
+    });
+
+    let mut best_device_idx = 0;
+    let mut max_score = 0;
+    for (idx, device) in devices.iter().enumerate() {
+        let score = rate_physical_device(instance, *device);
+        if score > max_score {
+            best_device_idx = idx;
+            max_score = score;
+        }
+    }
+
+    if max_score > 0 {
+        let best_device = devices[best_device_idx];
+        let properties = unsafe { instance.get_physical_device_properties(best_device) };
+        log::debug!(target: "vulkan",
+                    "Selected device {:?} with score {}",
+                    unsafe { CStr::from_ptr(properties.device_name.as_ptr()) },
+                    max_score);
+        return best_device;
+    }
+    panic!("Failed to find a suitable device.");
+}
+
 pub fn init(
     name: &'static str,
     version_major: u32,
@@ -136,11 +236,13 @@ pub fn init(
 
     let instance = create_instance(name, version, &entry);
     let (debug_utils_loader, debug_messenger) = setup_debug_messenger(&entry, &instance);
+    let physical_device = select_physical_device(&instance);
     VkData {
         _entry: entry,
         instance,
         debug_utils_loader,
         debug_messenger,
+        _physical_device: physical_device,
     }
 }
 
