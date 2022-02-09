@@ -5,7 +5,7 @@ use ash::vk;
 
 use std::{
     ffi::{CStr, CString},
-    os::raw::{c_char, c_void},
+    os::raw::c_void,
 };
 
 struct QueueFamilyIndices {
@@ -49,6 +49,8 @@ pub struct VkData {
     debug_utils_loader: ash::extensions::ext::DebugUtils,
     debug_messenger: vk::DebugUtilsMessengerEXT,
     _physical_device: vk::PhysicalDevice,
+    device: ash::Device,
+    _graphics_queue: vk::Queue,
 }
 
 fn create_instance(name: &str, version: u32, entry: &ash::Entry) -> ash::Instance {
@@ -224,6 +226,38 @@ fn select_physical_device(instance: &ash::Instance) -> vk::PhysicalDevice {
     panic!("Failed to find a suitable device.");
 }
 
+fn create_logical_device_with_graphics_queue(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+) -> (ash::Device, vk::Queue) {
+    let queue_family_indices = QueueFamilyIndices::find_queue_families(instance, physical_device);
+    let queue_priorities = [1.0f32];
+    let device_queue_create_infos = [vk::DeviceQueueCreateInfo::builder()
+        .queue_family_index(queue_family_indices.graphics_family.unwrap())
+        .queue_priorities(&queue_priorities)
+        .build()];
+    let required_validation_layers = validation::get_validation_layer_names_as_ptrs();
+    let device_features = vk::PhysicalDeviceFeatures::builder().build();
+    let mut device_create_info_builder = vk::DeviceCreateInfo::builder()
+        .enabled_features(&device_features)
+        .queue_create_infos(&device_queue_create_infos);
+    if validation::ENABLE_VALIDATION_LAYERS {
+        device_create_info_builder =
+            device_create_info_builder.enabled_layer_names(&required_validation_layers);
+    }
+
+    let device_create_info = device_create_info_builder.build();
+
+    let device = unsafe {
+        instance
+            .create_device(physical_device, &device_create_info, None)
+            .expect("Failed to create logical device.")
+    };
+    let graphics_queue =
+        unsafe { device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) };
+    (device, graphics_queue)
+}
+
 pub fn init(
     name: &'static str,
     version_major: u32,
@@ -237,17 +271,22 @@ pub fn init(
     let instance = create_instance(name, version, &entry);
     let (debug_utils_loader, debug_messenger) = setup_debug_messenger(&entry, &instance);
     let physical_device = select_physical_device(&instance);
+    let (device, graphics_queue) =
+        create_logical_device_with_graphics_queue(&instance, physical_device);
     VkData {
         _entry: entry,
         instance,
         debug_utils_loader,
         debug_messenger,
         _physical_device: physical_device,
+        device,
+        _graphics_queue: graphics_queue,
     }
 }
 
 pub fn deinit(vk_data: &VkData) {
     unsafe {
+        vk_data.device.destroy_device(None);
         if validation::ENABLE_VALIDATION_LAYERS {
             vk_data
                 .debug_utils_loader

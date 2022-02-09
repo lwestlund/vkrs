@@ -1,4 +1,4 @@
-use std::ffi::CStr;
+use std::{ffi::CStr, os::raw::c_char};
 
 #[cfg(debug_assertions)]
 pub const ENABLE_VALIDATION_LAYERS: bool = true;
