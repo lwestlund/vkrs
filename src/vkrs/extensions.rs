@@ -1,25 +1,24 @@
 use ash::extensions::ext::DebugUtils;
-use ash::extensions::khr::Surface;
 
 use std::ffi::CStr;
 
 #[cfg(target_os = "linux")]
-use ash::extensions::khr::XlibSurface;
-
-#[cfg(target_os = "linux")]
-pub fn get_required_extensions() -> Vec<*const i8> {
+pub fn get_required_extensions(window: &winit::window::Window) -> Vec<&'static CStr> {
     use crate::vkrs::validation;
 
-    let mut extensions = vec![Surface::name().as_ptr(), XlibSurface::name().as_ptr()];
+    let mut extensions = ash_window::enumerate_required_extensions(window)
+        .expect("Failed to enumerate required extensions for window.");
     if validation::ENABLE_VALIDATION_LAYERS {
-        extensions.push(DebugUtils::name().as_ptr());
+        unsafe {
+            extensions.push(CStr::from_ptr(DebugUtils::name().as_ptr()));
+        }
     }
     extensions
 }
 
 pub fn check_required_extensions(
     entry: &ash::Entry,
-    required_extensions: &[*const i8],
+    required_extensions: &[&'static CStr],
 ) -> Result<(), String> {
     let available_extensions = entry
         .enumerate_instance_extension_properties()
@@ -37,10 +36,9 @@ pub fn check_required_extensions(
     let mut missing_extensions = String::new();
     for required_extension in required_extensions.iter() {
         unsafe {
-            let required_extension = CStr::from_ptr(*required_extension);
             let extension_found = available_extensions.iter().find(|ext| {
                 let available_extension = CStr::from_ptr(ext.extension_name.as_ptr());
-                required_extension == available_extension
+                *required_extension == available_extension
             });
             if extension_found.is_none() {
                 if !missing_extensions.is_empty() {

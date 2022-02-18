@@ -5,29 +5,47 @@ use ash::vk;
 
 use std::{
     ffi::{CStr, CString},
-    os::raw::c_void,
+    os::raw::{c_char, c_void},
 };
 
 struct QueueFamilyIndices {
     pub graphics_family: Option<u32>,
+    pub present_family: Option<u32>,
 }
 
 impl QueueFamilyIndices {
     pub fn new() -> Self {
         let graphics_family = None;
-        Self { graphics_family }
+        let present_family = None;
+        Self {
+            graphics_family,
+            present_family,
+        }
     }
 
     pub fn find_queue_families(
         instance: &ash::Instance,
+        surface_fn: &ash::extensions::khr::Surface,
+        surface: vk::SurfaceKHR,
         device: vk::PhysicalDevice,
     ) -> QueueFamilyIndices {
         let queue_families =
             unsafe { instance.get_physical_device_queue_family_properties(device) };
         let mut indices = Self::new();
-        for (idx, queue_family) in queue_families.iter().enumerate() {
+        for (index, queue_family) in queue_families.iter().enumerate() {
+            let index = index as u32;
+            // TODO(lovew): Maybe change to prefer a queue supports both graphics and
+            // presentation by simply and-ing the two if conditions.
             if queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                indices.graphics_family = Some(idx as u32);
+                indices.graphics_family = Some(index);
+            }
+            let has_present_support = unsafe {
+                surface_fn
+                    .get_physical_device_surface_support(device, index, surface)
+                    .unwrap()
+            };
+            if has_present_support && indices.present_family.is_none() {
+                indices.present_family = Some(index)
             }
 
             if indices.is_complete() {
@@ -39,21 +57,16 @@ impl QueueFamilyIndices {
     }
 
     pub fn is_complete(&self) -> bool {
-        self.graphics_family.is_some()
+        self.graphics_family.is_some() && self.present_family.is_some()
     }
 }
 
-pub struct VkData {
-    _entry: ash::Entry,
-    instance: ash::Instance,
-    debug_utils_loader: ash::extensions::ext::DebugUtils,
-    debug_messenger: vk::DebugUtilsMessengerEXT,
-    _physical_device: vk::PhysicalDevice,
-    device: ash::Device,
-    _graphics_queue: vk::Queue,
-}
-
-fn create_instance(name: &str, version: u32, entry: &ash::Entry) -> ash::Instance {
+pub fn create_instance(
+    name: &str,
+    version: u32,
+    entry: &ash::Entry,
+    window: &winit::window::Window,
+) -> ash::Instance {
     let name = CString::new(name).unwrap();
 
     let app_info = vk::ApplicationInfo::builder()
@@ -61,10 +74,9 @@ fn create_instance(name: &str, version: u32, entry: &ash::Entry) -> ash::Instanc
         .application_version(version)
         .engine_name(name.as_c_str())
         .engine_version(version)
-        .api_version(vk::API_VERSION_1_2)
-        .build();
+        .api_version(vk::API_VERSION_1_2);
 
-    let required_extensions = extensions::get_required_extensions();
+    let required_extensions = extensions::get_required_extensions(window);
     if let Err(missing_extensions) =
         extensions::check_required_extensions(entry, &required_extensions)
     {
@@ -72,9 +84,11 @@ fn create_instance(name: &str, version: u32, entry: &ash::Entry) -> ash::Instanc
     }
 
     let validation_layer_names = validation::get_validation_layer_names_as_ptrs();
+    let instance_extensions: Vec<*const c_char> =
+        required_extensions.iter().map(|ext| ext.as_ptr()).collect();
     let mut instance_create_info = vk::InstanceCreateInfo::builder()
         .application_info(&app_info)
-        .enabled_extension_names(&required_extensions);
+        .enabled_extension_names(&instance_extensions);
 
     // Used to debug create_instance and destroy_instance.
     let mut debug_utils_create_info = populate_debug_messenger_create_info();
@@ -142,7 +156,7 @@ fn populate_debug_messenger_create_info() -> vk::DebugUtilsMessengerCreateInfoEX
         .build()
 }
 
-fn setup_debug_messenger(
+pub fn setup_debug_messenger(
     entry: &ash::Entry,
     instance: &ash::Instance,
 ) -> (ash::extensions::ext::DebugUtils, vk::DebugUtilsMessengerEXT) {
@@ -162,13 +176,18 @@ fn setup_debug_messenger(
     (debug_utils_loader, debug_messenger)
 }
 
-fn rate_physical_device(instance: &ash::Instance, device: vk::PhysicalDevice) -> u32 {
+fn rate_physical_device(
+    instance: &ash::Instance,
+    surface_fn: &ash::extensions::khr::Surface,
+    surface: vk::SurfaceKHR,
+    device: vk::PhysicalDevice,
+) -> u32 {
     let device_featues = unsafe { instance.get_physical_device_features(device) };
     if device_featues.geometry_shader != 1 {
         return 0;
     }
 
-    let indices = QueueFamilyIndices::find_queue_families(instance, device);
+    let indices = QueueFamilyIndices::find_queue_families(instance, surface_fn, surface, device);
     if !indices.is_complete() {
         return 0;
     }
@@ -185,7 +204,11 @@ fn rate_physical_device(instance: &ash::Instance, device: vk::PhysicalDevice) ->
     score
 }
 
-fn select_physical_device(instance: &ash::Instance) -> vk::PhysicalDevice {
+pub fn select_physical_device(
+    instance: &ash::Instance,
+    surface_fn: &ash::extensions::khr::Surface,
+    surface: vk::SurfaceKHR,
+) -> vk::PhysicalDevice {
     let devices = unsafe {
         instance
             .enumerate_physical_devices()
@@ -207,7 +230,7 @@ fn select_physical_device(instance: &ash::Instance) -> vk::PhysicalDevice {
     let mut best_device_idx = 0;
     let mut max_score = 0;
     for (idx, device) in devices.iter().enumerate() {
-        let score = rate_physical_device(instance, *device);
+        let score = rate_physical_device(instance, surface_fn, surface, *device);
         if score > max_score {
             best_device_idx = idx;
             max_score = score;
@@ -226,73 +249,51 @@ fn select_physical_device(instance: &ash::Instance) -> vk::PhysicalDevice {
     panic!("Failed to find a suitable device.");
 }
 
-fn create_logical_device_with_graphics_queue(
+pub fn create_logical_device_with_graphics_and_present_queue(
     instance: &ash::Instance,
+    surface_fn: &ash::extensions::khr::Surface,
+    surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
-) -> (ash::Device, vk::Queue) {
-    let queue_family_indices = QueueFamilyIndices::find_queue_families(instance, physical_device);
+) -> (ash::Device, vk::Queue, vk::Queue) {
+    let queue_family_indices =
+        QueueFamilyIndices::find_queue_families(instance, surface_fn, surface, physical_device);
     let queue_priorities = [1.0f32];
-    let device_queue_create_infos = [vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(queue_family_indices.graphics_family.unwrap())
-        .queue_priorities(&queue_priorities)
-        .build()];
+    let graphics_family_index = queue_family_indices.graphics_family.unwrap();
+    let present_family_index = queue_family_indices.present_family.unwrap();
+    let device_queue_create_infos: Vec<vk::DeviceQueueCreateInfo> = {
+        // We only need to give the unique queue families needed, and graphics and present
+        // may be supported by the same queue, so we remove duplicates if any.
+        let mut queue_family_indices = vec![graphics_family_index, present_family_index];
+        queue_family_indices.dedup();
+
+        // Create a vector of DeviceQueueCreateInfo for each queue.
+        queue_family_indices
+            .iter()
+            .map(|index| {
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(*index)
+                    .queue_priorities(&queue_priorities)
+                    .build()
+            })
+            .collect()
+    };
+
     let required_validation_layers = validation::get_validation_layer_names_as_ptrs();
-    let device_features = vk::PhysicalDeviceFeatures::builder().build();
-    let mut device_create_info_builder = vk::DeviceCreateInfo::builder()
+    let device_features = vk::PhysicalDeviceFeatures::builder();
+    let mut device_create_info = vk::DeviceCreateInfo::builder()
         .enabled_features(&device_features)
         .queue_create_infos(&device_queue_create_infos);
     if validation::ENABLE_VALIDATION_LAYERS {
-        device_create_info_builder =
-            device_create_info_builder.enabled_layer_names(&required_validation_layers);
+        device_create_info = device_create_info.enabled_layer_names(&required_validation_layers);
     }
 
-    let device_create_info = device_create_info_builder.build();
-
+    // Create the logical device and required queues.
     let device = unsafe {
         instance
             .create_device(physical_device, &device_create_info, None)
             .expect("Failed to create logical device.")
     };
-    let graphics_queue =
-        unsafe { device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) };
-    (device, graphics_queue)
-}
-
-pub fn init(
-    name: &'static str,
-    version_major: u32,
-    version_minor: u32,
-    version_patch: u32,
-) -> VkData {
-    let entry = unsafe { ash::Entry::load().expect("Failed to load Vulkan.") };
-
-    let version = vk::make_api_version(0, version_major, version_minor, version_patch);
-
-    let instance = create_instance(name, version, &entry);
-    let (debug_utils_loader, debug_messenger) = setup_debug_messenger(&entry, &instance);
-    let physical_device = select_physical_device(&instance);
-    let (device, graphics_queue) =
-        create_logical_device_with_graphics_queue(&instance, physical_device);
-    VkData {
-        _entry: entry,
-        instance,
-        debug_utils_loader,
-        debug_messenger,
-        _physical_device: physical_device,
-        device,
-        _graphics_queue: graphics_queue,
-    }
-}
-
-pub fn deinit(vk_data: &VkData) {
-    unsafe {
-        vk_data.device.destroy_device(None);
-        if validation::ENABLE_VALIDATION_LAYERS {
-            vk_data
-                .debug_utils_loader
-                .destroy_debug_utils_messenger(vk_data.debug_messenger, None);
-        }
-        vk_data.instance.destroy_instance(None);
-    }
-    log::debug!(target: "vulkan", "Deinitialized");
+    let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
+    let present_queue = unsafe { device.get_device_queue(present_family_index, 0) };
+    (device, graphics_queue, present_queue)
 }
