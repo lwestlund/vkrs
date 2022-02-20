@@ -1,4 +1,4 @@
-use ash::extensions::ext::DebugUtils;
+use ash::{extensions::ext::DebugUtils, vk};
 
 use std::ffi::CStr;
 
@@ -57,4 +57,34 @@ pub fn check_required_extensions(
     } else {
         Err(missing_extensions)
     }
+}
+
+pub fn get_required_device_extensions() -> [&'static CStr; 1] {
+    [ash::extensions::khr::Swapchain::name()]
+}
+
+pub fn check_device_extension_support(
+    instance: &ash::Instance,
+    device: vk::PhysicalDevice,
+) -> bool {
+    let required_extensions = get_required_device_extensions();
+
+    let extension_properties = unsafe {
+        instance
+            .enumerate_device_extension_properties(device)
+            .expect("Failed to enumerate device extension properties.")
+    };
+
+    for required_extension in required_extensions.iter() {
+        let found = extension_properties.iter().any(|ext| {
+            let extension_name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
+            *required_extension == extension_name
+        });
+
+        if !found {
+            return false;
+        }
+    }
+
+    true
 }

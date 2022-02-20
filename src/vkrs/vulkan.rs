@@ -1,5 +1,6 @@
 use super::extensions;
 use super::queue_family_indices::QueueFamilyIndices;
+use super::swapchain;
 use super::validation;
 
 use ash::vk;
@@ -140,6 +141,19 @@ fn rate_physical_device(
         return 0;
     }
 
+    let device_extension_support = extensions::check_device_extension_support(instance, device);
+    if !device_extension_support {
+        return 0;
+    }
+
+    // Can only get swapchain support details after we have verified device extension support for it.
+    let swapchain_support_details = swapchain::SupportDetails::new(device, surface_fn, surface);
+    if swapchain_support_details.formats.is_empty()
+        || swapchain_support_details.present_modes.is_empty()
+    {
+        return 0;
+    }
+
     let mut score = 0;
     let device_properties = unsafe { instance.get_physical_device_properties(device) };
     if device_properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
@@ -208,7 +222,7 @@ pub fn create_logical_device_with_graphics_and_present_queue(
     let queue_priorities = [1.0f32];
     let graphics_family_index = queue_family_indices.graphics_family.unwrap();
     let present_family_index = queue_family_indices.present_family.unwrap();
-    let device_queue_create_infos: Vec<vk::DeviceQueueCreateInfo> = {
+    let device_queue_create_infos = {
         // We only need to give the unique queue families needed, and graphics and present
         // may be supported by the same queue, so we remove duplicates if any.
         let mut queue_family_indices = vec![graphics_family_index, present_family_index];
@@ -223,12 +237,18 @@ pub fn create_logical_device_with_graphics_and_present_queue(
                     .queue_priorities(&queue_priorities)
                     .build()
             })
-            .collect()
+            .collect::<Vec<_>>()
     };
 
     let required_validation_layers = validation::get_validation_layer_names_as_ptrs();
+    let device_extensions = extensions::get_required_device_extensions();
+    let device_extension_names = device_extensions
+        .iter()
+        .map(|ext| ext.as_ptr())
+        .collect::<Vec<_>>();
     let device_features = vk::PhysicalDeviceFeatures::builder();
     let mut device_create_info = vk::DeviceCreateInfo::builder()
+        .enabled_extension_names(&device_extension_names)
         .enabled_features(&device_features)
         .queue_create_infos(&device_queue_create_infos);
     if validation::ENABLE_VALIDATION_LAYERS {

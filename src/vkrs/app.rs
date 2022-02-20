@@ -1,3 +1,4 @@
+use super::swapchain;
 use super::validation;
 use super::vulkan;
 
@@ -22,6 +23,11 @@ pub struct App {
     device: ash::Device,
     _graphics_queue: vk::Queue,
     _present_queue: vk::Queue,
+    swapchain_fn: ash::extensions::khr::Swapchain,
+    swapchain: vk::SwapchainKHR,
+    _swapchain_image_format: vk::Format,
+    _swapchain_extent: vk::Extent2D,
+    _swapchain_images: Vec<vk::Image>,
 }
 
 impl App {
@@ -50,6 +56,16 @@ impl App {
                 surface,
                 physical_device,
             );
+        let (swapchain_fn, swapchain, swapchain_image_format, swapchain_extent, swapchain_images) =
+            swapchain::create_swapchain_and_images(
+                &instance,
+                physical_device,
+                &device,
+                &surface_fn,
+                surface,
+                &window.inner_size(),
+            );
+
         Self {
             _entry: entry,
             instance,
@@ -61,6 +77,11 @@ impl App {
             device,
             _graphics_queue: graphics_queue,
             _present_queue: present_queue,
+            swapchain_fn,
+            swapchain,
+            _swapchain_image_format: swapchain_image_format,
+            _swapchain_extent: swapchain_extent,
+            _swapchain_images: swapchain_images,
         }
     }
 
@@ -80,6 +101,7 @@ impl App {
 
     fn destroy_vulkan(&self) {
         unsafe {
+            self.swapchain_fn.destroy_swapchain(self.swapchain, None);
             self.device.destroy_device(None);
             self.surface_fn.destroy_surface(self.surface, None);
             if validation::ENABLE_VALIDATION_LAYERS {
