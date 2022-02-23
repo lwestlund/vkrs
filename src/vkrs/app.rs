@@ -28,6 +28,7 @@ pub struct App {
     _swapchain_image_format: vk::Format,
     _swapchain_extent: vk::Extent2D,
     _swapchain_images: Vec<vk::Image>,
+    swapchain_image_views: Vec<vk::ImageView>,
 }
 
 impl App {
@@ -65,6 +66,8 @@ impl App {
                 surface,
                 &window.inner_size(),
             );
+        let swapchain_image_views =
+            swapchain::create_image_views(&device, &swapchain_images, swapchain_image_format);
 
         Self {
             _entry: entry,
@@ -82,6 +85,7 @@ impl App {
             _swapchain_image_format: swapchain_image_format,
             _swapchain_extent: swapchain_extent,
             _swapchain_images: swapchain_images,
+            swapchain_image_views,
         }
     }
 
@@ -101,6 +105,9 @@ impl App {
 
     fn destroy_vulkan(&self) {
         unsafe {
+            self.swapchain_image_views
+                .iter()
+                .for_each(|v| self.device.destroy_image_view(*v, None));
             self.swapchain_fn.destroy_swapchain(self.swapchain, None);
             self.device.destroy_device(None);
             self.surface_fn.destroy_surface(self.surface, None);
