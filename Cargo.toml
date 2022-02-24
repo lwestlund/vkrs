@@ -10,3 +10,7 @@ ash-window = "0.9.0"
 log = "0.4.0"
 env_logger = "0.9.0"
 winit = "0.26.1"
+
+[build-dependencies]
+# TODO(lovew): Move to [dependencies] when we implement live reloading of shaders.
+shaderc = "0.7.4"
