@@ -69,6 +69,8 @@ impl App {
         let swapchain_image_views =
             swapchain::create_image_views(&device, &swapchain_images, swapchain_image_format);
 
+        let _graphics_pipeline = vulkan::create_graphics_pipeline(&device);
+
         Self {
             _entry: entry,
             instance,

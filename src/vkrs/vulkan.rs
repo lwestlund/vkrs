@@ -1,5 +1,6 @@
 use super::extensions;
 use super::queue_family_indices::QueueFamilyIndices;
+use super::shader;
 use super::swapchain;
 use super::validation;
 
@@ -8,6 +9,7 @@ use ash::vk;
 use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_void},
+    path::PathBuf,
 };
 
 pub fn create_instance(
@@ -264,4 +266,32 @@ pub fn create_logical_device_with_graphics_and_present_queue(
     let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
     let present_queue = unsafe { device.get_device_queue(present_family_index, 0) };
     (device, graphics_queue, present_queue)
+}
+
+pub fn create_graphics_pipeline(device: &ash::Device) {
+    let out_dir = PathBuf::from("src/vkrs/shaders");
+    let vertex_shader_code = shader::read_shader_file(&out_dir.join("shader.vert.spv"));
+    let fragment_shader_code = shader::read_shader_file(&out_dir.join("shader.frag.spv"));
+
+    let vertex_shader_module = shader::create_shader_module(device, &vertex_shader_code);
+    let fragment_shader_module = shader::create_shader_module(device, &fragment_shader_code);
+
+    let shader_entry_point = CString::new("main").unwrap();
+    let vertex_shader_stage_info = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::VERTEX)
+        .module(vertex_shader_module)
+        .name(&shader_entry_point)
+        .build();
+    let fragment_shader_stage_info = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::FRAGMENT)
+        .module(fragment_shader_module)
+        .name(&shader_entry_point)
+        .build();
+
+    let _shader_stages = [vertex_shader_stage_info, fragment_shader_stage_info];
+
+    unsafe {
+        device.destroy_shader_module(vertex_shader_module, None);
+        device.destroy_shader_module(fragment_shader_module, None);
+    }
 }
