@@ -29,6 +29,7 @@ pub struct App {
     _swapchain_extent: vk::Extent2D,
     _swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
+    render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
 }
 
@@ -70,6 +71,7 @@ impl App {
         let swapchain_image_views =
             swapchain::create_image_views(&device, &swapchain_images, swapchain_image_format);
 
+        let render_pass = vulkan::create_render_pass(&device, swapchain_image_format);
         let pipeline_layout = vulkan::create_graphics_pipeline(&device, swapchain_extent);
 
         Self {
@@ -89,6 +91,7 @@ impl App {
             _swapchain_extent: swapchain_extent,
             _swapchain_images: swapchain_images,
             swapchain_image_views,
+            render_pass,
             pipeline_layout,
         }
     }
@@ -111,6 +114,7 @@ impl App {
         unsafe {
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_render_pass(self.render_pass, None);
             self.swapchain_image_views
                 .iter()
                 .for_each(|v| self.device.destroy_image_view(*v, None));
