@@ -306,7 +306,8 @@ pub fn create_render_pass(
 pub fn create_graphics_pipeline(
     device: &ash::Device,
     swapchain_extent: vk::Extent2D,
-) -> vk::PipelineLayout {
+    render_pass: vk::RenderPass,
+) -> (vk::Pipeline, vk::PipelineLayout) {
     let out_dir = PathBuf::from("src/vkrs/shaders");
     let vertex_shader_code = shader::read_shader_file(&out_dir.join("shader.vert.spv"));
     let fragment_shader_code = shader::read_shader_file(&out_dir.join("shader.frag.spv"));
@@ -326,17 +327,17 @@ pub fn create_graphics_pipeline(
         .name(&shader_entry_point)
         .build();
 
-    let _shader_stages = [vertex_shader_stage_info, fragment_shader_stage_info];
+    let shader_stages = [vertex_shader_stage_info, fragment_shader_stage_info];
 
     // Fixed function configuration.
     // Vertex input.
-    let _vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder()
+    let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder()
         // .vertex_binding_descriptions(&[]) // Empty because vertices are hard coded in shader.
         // .vertex_attribute_descriptions(&[]) // Empty because vertices are hard coded in shader.
         .build();
 
     // Input assembly.
-    let _input_assembly = vk::PipelineInputAssemblyStateCreateInfo::builder()
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
@@ -355,12 +356,12 @@ pub fn create_graphics_pipeline(
         .extent(swapchain_extent)
         .build();
     let scissors = [scissor];
-    let _viewport_state = vk::PipelineViewportStateCreateInfo::builder()
+    let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
         .viewports(&viewports)
         .scissors(&scissors);
 
     // Rasterizer.
-    let _rasterizer = vk::PipelineRasterizationStateCreateInfo::builder()
+    let rasterizer = vk::PipelineRasterizationStateCreateInfo::builder()
         .depth_clamp_enable(false)
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
@@ -370,7 +371,7 @@ pub fn create_graphics_pipeline(
         .depth_bias_enable(false);
 
     // Multisampling.
-    let _multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
+    let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(false)
         .rasterization_samples(vk::SampleCountFlags::TYPE_1)
         .min_sample_shading(1.0)
@@ -389,7 +390,7 @@ pub fn create_graphics_pipeline(
         .alpha_blend_op(vk::BlendOp::ADD)
         .build();
     let color_blend_attachments = [color_blend_attachment];
-    let _color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
+    let color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
         .logic_op_enable(false)
         .logic_op(vk::LogicOp::COPY)
         .attachments(&color_blend_attachments)
@@ -403,10 +404,29 @@ pub fn create_graphics_pipeline(
             .unwrap()
     };
 
+    let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
+        .stages(&shader_stages)
+        .vertex_input_state(&vertex_input_info)
+        .input_assembly_state(&input_assembly)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterizer)
+        .multisample_state(&multisampling)
+        .color_blend_state(&color_blending)
+        .layout(pipeline_layout)
+        .render_pass(render_pass)
+        .subpass(0)
+        .build();
+    let pipeline_infos = [pipeline_info];
+    let graphics_pipeline = unsafe {
+        device
+            .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, None)
+            .unwrap()[0]
+    };
+
     unsafe {
         device.destroy_shader_module(vertex_shader_module, None);
         device.destroy_shader_module(fragment_shader_module, None);
     }
 
-    pipeline_layout
+    (graphics_pipeline, pipeline_layout)
 }
