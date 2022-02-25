@@ -268,7 +268,10 @@ pub fn create_logical_device_with_graphics_and_present_queue(
     (device, graphics_queue, present_queue)
 }
 
-pub fn create_graphics_pipeline(device: &ash::Device) {
+pub fn create_graphics_pipeline(
+    device: &ash::Device,
+    swapchain_extent: vk::Extent2D,
+) -> vk::PipelineLayout {
     let out_dir = PathBuf::from("src/vkrs/shaders");
     let vertex_shader_code = shader::read_shader_file(&out_dir.join("shader.vert.spv"));
     let fragment_shader_code = shader::read_shader_file(&out_dir.join("shader.frag.spv"));
@@ -290,8 +293,85 @@ pub fn create_graphics_pipeline(device: &ash::Device) {
 
     let _shader_stages = [vertex_shader_stage_info, fragment_shader_stage_info];
 
+    // Fixed function configuration.
+    // Vertex input.
+    let _vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder()
+        // .vertex_binding_descriptions(&[]) // Empty because vertices are hard coded in shader.
+        // .vertex_attribute_descriptions(&[]) // Empty because vertices are hard coded in shader.
+        .build();
+
+    // Input assembly.
+    let _input_assembly = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false);
+
+    // Viewports and scissors.
+    let viewport = vk::Viewport::builder()
+        .x(0.0)
+        .y(0.0)
+        .width(swapchain_extent.width as _)
+        .height(swapchain_extent.height as _)
+        .min_depth(0.0)
+        .max_depth(1.0)
+        .build();
+    let viewports = [viewport];
+    let scissor = vk::Rect2D::builder()
+        .offset(vk::Offset2D { x: 0, y: 0 })
+        .extent(swapchain_extent)
+        .build();
+    let scissors = [scissor];
+    let _viewport_state = vk::PipelineViewportStateCreateInfo::builder()
+        .viewports(&viewports)
+        .scissors(&scissors);
+
+    // Rasterizer.
+    let _rasterizer = vk::PipelineRasterizationStateCreateInfo::builder()
+        .depth_clamp_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.0)
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .depth_bias_enable(false);
+
+    // Multisampling.
+    let _multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
+        .sample_shading_enable(false)
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+        .min_sample_shading(1.0)
+        .alpha_to_coverage_enable(false)
+        .alpha_to_one_enable(false);
+
+    // Color blending.
+    let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+        .blend_enable(false)
+        .src_color_blend_factor(vk::BlendFactor::ONE)
+        .dst_color_blend_factor(vk::BlendFactor::ZERO)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+        .alpha_blend_op(vk::BlendOp::ADD)
+        .build();
+    let color_blend_attachments = [color_blend_attachment];
+    let _color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
+        .logic_op_enable(false)
+        .logic_op(vk::LogicOp::COPY)
+        .attachments(&color_blend_attachments)
+        .blend_constants([0.0, 0.0, 0.0, 0.0]);
+
+    // Pipeline layout.
+    let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder().build();
+    let pipeline_layout = unsafe {
+        device
+            .create_pipeline_layout(&pipeline_layout_info, None)
+            .unwrap()
+    };
+
     unsafe {
         device.destroy_shader_module(vertex_shader_module, None);
         device.destroy_shader_module(fragment_shader_module, None);
     }
+
+    pipeline_layout
 }
