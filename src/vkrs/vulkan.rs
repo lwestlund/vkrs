@@ -451,3 +451,88 @@ pub fn create_framebuffers(
         })
         .collect::<Vec<_>>()
 }
+
+pub fn create_command_pool(
+    device: &ash::Device,
+    instance: &ash::Instance,
+    surface_fn: &ash::extensions::khr::Surface,
+    surface: vk::SurfaceKHR,
+    physical_device: vk::PhysicalDevice,
+) -> vk::CommandPool {
+    let queue_family_indices =
+        QueueFamilyIndices::find_queue_families(instance, surface_fn, surface, physical_device);
+
+    let pool_info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+        .queue_family_index(queue_family_indices.graphics_family.unwrap());
+
+    unsafe { device.create_command_pool(&pool_info, None).unwrap() }
+}
+
+pub fn create_command_buffers(
+    device: &ash::Device,
+    command_pool: vk::CommandPool,
+) -> Vec<vk::CommandBuffer> {
+    let alloc_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(1);
+
+    unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
+}
+
+pub fn _record_command_buffer(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    swapchain_extent: vk::Extent2D,
+    graphics_pipeline: vk::Pipeline,
+) {
+    // Begin the command buffer.
+    let begin_info = vk::CommandBufferBeginInfo::builder().build();
+    unsafe {
+        device
+            .begin_command_buffer(command_buffer, &begin_info)
+            .unwrap()
+    };
+
+    let clear_values = [vk::ClearValue {
+        color: vk::ClearColorValue {
+            float32: [0.0, 0.0, 0.0, 1.0],
+        },
+    }];
+    let render_pass_info = vk::RenderPassBeginInfo::builder()
+        .render_pass(render_pass)
+        .framebuffer(framebuffer)
+        .render_area(vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: swapchain_extent,
+        })
+        .clear_values(&clear_values);
+    unsafe {
+        device.cmd_begin_render_pass(
+            command_buffer,
+            &render_pass_info,
+            vk::SubpassContents::INLINE,
+        )
+    };
+
+    unsafe {
+        device.cmd_bind_pipeline(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            graphics_pipeline,
+        )
+    }
+
+    unsafe {
+        device.cmd_draw(command_buffer, 3, 1, 0, 0);
+    }
+
+    unsafe {
+        device.cmd_end_render_pass(command_buffer);
+    }
+
+    unsafe { device.end_command_buffer(command_buffer).unwrap() };
+}

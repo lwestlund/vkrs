@@ -33,6 +33,8 @@ pub struct App {
     graphics_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     swapchain_framebuffers: Vec<vk::Framebuffer>,
+    command_pool: vk::CommandPool,
+    _command_buffers: Vec<vk::CommandBuffer>,
 }
 
 impl App {
@@ -84,6 +86,10 @@ impl App {
             swapchain_extent,
         );
 
+        let command_pool =
+            vulkan::create_command_pool(&device, &instance, &surface_fn, surface, physical_device);
+        let command_buffers = vulkan::create_command_buffers(&device, command_pool);
+
         Self {
             _entry: entry,
             instance,
@@ -105,6 +111,8 @@ impl App {
             graphics_pipeline,
             pipeline_layout,
             swapchain_framebuffers,
+            command_pool,
+            _command_buffers: command_buffers,
         }
     }
 
@@ -124,6 +132,7 @@ impl App {
 
     fn destroy_vulkan(&self) {
         unsafe {
+            self.device.destroy_command_pool(self.command_pool, None);
             self.swapchain_framebuffers.iter().for_each(|framebuffer| {
                 self.device.destroy_framebuffer(*framebuffer, None);
             });
