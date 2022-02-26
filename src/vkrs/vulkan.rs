@@ -430,3 +430,24 @@ pub fn create_graphics_pipeline(
 
     (graphics_pipeline, pipeline_layout)
 }
+
+pub fn create_framebuffers(
+    device: &ash::Device,
+    swapchain_image_views: &[vk::ImageView],
+    render_pass: vk::RenderPass,
+    swapchain_extent: vk::Extent2D,
+) -> Vec<vk::Framebuffer> {
+    swapchain_image_views
+        .iter()
+        .map(|view| [*view])
+        .map(|attachments| {
+            let framebuffer_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(render_pass)
+                .attachments(&attachments)
+                .width(swapchain_extent.width)
+                .height(swapchain_extent.height)
+                .layers(1);
+            unsafe { device.create_framebuffer(&framebuffer_info, None).unwrap() }
+        })
+        .collect::<Vec<_>>()
+}
