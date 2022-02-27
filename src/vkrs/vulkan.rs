@@ -483,11 +483,12 @@ pub fn create_command_pool(
 pub fn create_command_buffers(
     device: &ash::Device,
     command_pool: vk::CommandPool,
+    max_frames_in_flight: u32,
 ) -> Vec<vk::CommandBuffer> {
     let alloc_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(1);
+        .command_buffer_count(max_frames_in_flight);
 
     unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
 }
@@ -548,35 +549,49 @@ pub fn record_command_buffer(
     unsafe { device.end_command_buffer(command_buffer).unwrap() };
 }
 
-pub fn create_sync_objects(device: &ash::Device) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
-    let image_available_semaphore = {
-        let semaphore_info = vk::SemaphoreCreateInfo::builder();
-        unsafe {
-            device
-                .create_semaphore(&semaphore_info, None)
-                .expect("Failed to create semaphore.")
-        }
-    };
-    let render_finished_semaphore = {
-        let semaphore_info = vk::SemaphoreCreateInfo::builder();
-        unsafe {
-            device
-                .create_semaphore(&semaphore_info, None)
-                .expect("Failed to create semaphore.")
-        }
-    };
-    let in_flight_fence = {
-        let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-        unsafe {
-            device
-                .create_fence(&fence_info, None)
-                .expect("Failed to create fence.")
-        }
-    };
+pub fn create_sync_objects(
+    device: &ash::Device,
+    max_frames_in_flight: u32,
+) -> (Vec<vk::Semaphore>, Vec<vk::Semaphore>, Vec<vk::Fence>) {
+    let mut image_available_semaphores = Vec::new();
+    let mut render_finished_semaphores = Vec::new();
+    let mut in_flight_fences = Vec::new();
+
+    for _ in 0..max_frames_in_flight {
+        let image_available_semaphore = {
+            let semaphore_info = vk::SemaphoreCreateInfo::builder();
+            unsafe {
+                device
+                    .create_semaphore(&semaphore_info, None)
+                    .expect("Failed to create semaphore.")
+            }
+        };
+        image_available_semaphores.push(image_available_semaphore);
+
+        let render_finished_semaphore = {
+            let semaphore_info = vk::SemaphoreCreateInfo::builder();
+            unsafe {
+                device
+                    .create_semaphore(&semaphore_info, None)
+                    .expect("Failed to create semaphore.")
+            }
+        };
+        render_finished_semaphores.push(render_finished_semaphore);
+
+        let in_flight_fence = {
+            let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+            unsafe {
+                device
+                    .create_fence(&fence_info, None)
+                    .expect("Failed to create fence.")
+            }
+        };
+        in_flight_fences.push(in_flight_fence);
+    }
 
     (
-        image_available_semaphore,
-        render_finished_semaphore,
-        in_flight_fence,
+        image_available_semaphores,
+        render_finished_semaphores,
+        in_flight_fences,
     )
 }

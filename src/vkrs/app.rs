@@ -12,6 +12,8 @@ const VERSION_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 const VERSION_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 const VERSION_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
+const MAX_FRAMES_IN_FLIGHT: u32 = 2;
+
 pub struct App {
     _entry: ash::Entry,
     instance: ash::Instance,
@@ -35,9 +37,10 @@ pub struct App {
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-    image_available_semaphore: vk::Semaphore,
-    render_finished_semaphore: vk::Semaphore,
-    in_flight_fence: vk::Fence,
+    image_available_semaphores: Vec<vk::Semaphore>,
+    render_finished_semaphores: Vec<vk::Semaphore>,
+    in_flight_fences: Vec<vk::Fence>,
+    current_frame: usize,
 }
 
 impl App {
@@ -91,10 +94,11 @@ impl App {
 
         let command_pool =
             vulkan::create_command_pool(&device, &instance, &surface_fn, surface, physical_device);
-        let command_buffers = vulkan::create_command_buffers(&device, command_pool);
+        let command_buffers =
+            vulkan::create_command_buffers(&device, command_pool, MAX_FRAMES_IN_FLIGHT);
 
-        let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
-            vulkan::create_sync_objects(&device);
+        let (image_available_semaphores, render_finished_semaphores, in_flight_fences) =
+            vulkan::create_sync_objects(&device, MAX_FRAMES_IN_FLIGHT);
 
         Self {
             _entry: entry,
@@ -119,15 +123,16 @@ impl App {
             swapchain_framebuffers,
             command_pool,
             command_buffers,
-            image_available_semaphore,
-            render_finished_semaphore,
-            in_flight_fence,
+            image_available_semaphores,
+            render_finished_semaphores,
+            in_flight_fences,
+            current_frame: 0,
         }
     }
 
-    fn draw_frame(&self) {
+    fn draw_frame(&mut self) {
         unsafe {
-            let fences = [self.in_flight_fence];
+            let fences = [self.in_flight_fences[self.current_frame]];
             self.device
                 .wait_for_fences(&fences, true, u64::MAX)
                 .unwrap();
@@ -139,14 +144,14 @@ impl App {
                 .acquire_next_image(
                     self.swapchain,
                     u64::MAX,
-                    self.image_available_semaphore,
+                    self.image_available_semaphores[self.current_frame],
                     vk::Fence::null(),
                 )
                 .unwrap()
                 .0
         };
 
-        let command_buffer = self.command_buffers[0];
+        let command_buffer = self.command_buffers[self.current_frame];
         let frame_buffer = self.swapchain_framebuffers[image_index as usize];
         unsafe {
             self.device
@@ -162,10 +167,10 @@ impl App {
             self.graphics_pipeline,
         );
 
-        let wait_semaphores = [self.image_available_semaphore];
+        let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffers = [command_buffer];
-        let signal_semaphores = [self.render_finished_semaphore];
+        let signal_semaphores = [self.render_finished_semaphores[self.current_frame]];
         let submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
@@ -175,7 +180,11 @@ impl App {
         let submit_infos = [submit_info];
         unsafe {
             self.device
-                .queue_submit(self.graphics_queue, &submit_infos, self.in_flight_fence)
+                .queue_submit(
+                    self.graphics_queue,
+                    &submit_infos,
+                    self.in_flight_fences[self.current_frame],
+                )
                 .expect("Failed to submit draw command buffer.")
         };
 
@@ -190,9 +199,11 @@ impl App {
                 .queue_present(self.present_queue, &present_info)
                 .unwrap()
         };
+
+        self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT as usize;
     }
 
-    pub fn run(self, event_loop: EventLoop<()>, window: winit::window::Window) {
+    pub fn run(mut self, event_loop: EventLoop<()>, window: winit::window::Window) {
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
@@ -212,11 +223,15 @@ impl App {
 
     fn destroy_vulkan(&self) {
         unsafe {
-            self.device
-                .destroy_semaphore(self.image_available_semaphore, None);
-            self.device
-                .destroy_semaphore(self.render_finished_semaphore, None);
-            self.device.destroy_fence(self.in_flight_fence, None);
+            self.image_available_semaphores.iter().for_each(|s| {
+                self.device.destroy_semaphore(*s, None);
+            });
+            self.render_finished_semaphores.iter().for_each(|s| {
+                self.device.destroy_semaphore(*s, None);
+            });
+            self.in_flight_fences.iter().for_each(|f| {
+                self.device.destroy_fence(*f, None);
+            });
             self.device.destroy_command_pool(self.command_pool, None);
             self.swapchain_framebuffers.iter().for_each(|framebuffer| {
                 self.device.destroy_framebuffer(*framebuffer, None);
