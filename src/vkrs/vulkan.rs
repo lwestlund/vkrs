@@ -296,9 +296,20 @@ pub fn create_render_pass(
         .build();
     let subpasses = [subpass];
 
+    let dependency = vk::SubpassDependency::builder()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0) // Reference to subpasses[0].
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .build();
+    let dependencies = [dependency];
+
     let render_pass_info = vk::RenderPassCreateInfo::builder()
         .attachments(&color_attachments)
-        .subpasses(&subpasses);
+        .subpasses(&subpasses)
+        .dependencies(&dependencies);
 
     unsafe { device.create_render_pass(&render_pass_info, None).unwrap() }
 }
@@ -481,7 +492,7 @@ pub fn create_command_buffers(
     unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
 }
 
-pub fn _record_command_buffer(
+pub fn record_command_buffer(
     device: &ash::Device,
     command_buffer: vk::CommandBuffer,
     render_pass: vk::RenderPass,
@@ -535,4 +546,37 @@ pub fn _record_command_buffer(
     }
 
     unsafe { device.end_command_buffer(command_buffer).unwrap() };
+}
+
+pub fn create_sync_objects(device: &ash::Device) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
+    let image_available_semaphore = {
+        let semaphore_info = vk::SemaphoreCreateInfo::builder();
+        unsafe {
+            device
+                .create_semaphore(&semaphore_info, None)
+                .expect("Failed to create semaphore.")
+        }
+    };
+    let render_finished_semaphore = {
+        let semaphore_info = vk::SemaphoreCreateInfo::builder();
+        unsafe {
+            device
+                .create_semaphore(&semaphore_info, None)
+                .expect("Failed to create semaphore.")
+        }
+    };
+    let in_flight_fence = {
+        let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+        unsafe {
+            device
+                .create_fence(&fence_info, None)
+                .expect("Failed to create fence.")
+        }
+    };
+
+    (
+        image_available_semaphore,
+        render_finished_semaphore,
+        in_flight_fence,
+    )
 }
