@@ -106,6 +106,7 @@ pub fn create_swapchain_and_images(
     surface_fn: &ash::extensions::khr::Surface,
     surface: vk::SurfaceKHR,
     window_size: &winit::dpi::PhysicalSize<u32>,
+    old_swapchain_khr: Option<vk::SwapchainKHR>,
 ) -> (
     ash::extensions::khr::Swapchain,
     vk::SwapchainKHR,
@@ -161,22 +162,23 @@ pub fn create_swapchain_and_images(
                 .queue_family_indices(&queue_family_indices),
         };
 
-        builder
+        builder = builder
             .pre_transform(swapchain_support_details.capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(properties.present_mode)
-            .clipped(true)
-        // TODO(lovew): There is no old swapchain at the moment since we disallow
-        // resizing of the window.
-        // .old_swapchain(old_swapchain)
+            .clipped(true);
+        if let Some(old_swapchain_khr) = old_swapchain_khr {
+            builder = builder.old_swapchain(old_swapchain_khr);
+        }
+        builder
     };
 
-    let swapchain_fn = ash::extensions::khr::Swapchain::new(instance, device);
-    let swapchain = unsafe { swapchain_fn.create_swapchain(&create_info, None).unwrap() };
-    let images = unsafe { swapchain_fn.get_swapchain_images(swapchain).unwrap() };
+    let swapchain = ash::extensions::khr::Swapchain::new(instance, device);
+    let swapchain_khr = unsafe { swapchain.create_swapchain(&create_info, None).unwrap() };
+    let images = unsafe { swapchain.get_swapchain_images(swapchain_khr).unwrap() };
     (
-        swapchain_fn,
         swapchain,
+        swapchain_khr,
         properties.surface_format.format,
         properties.extent,
         images,

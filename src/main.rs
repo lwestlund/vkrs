@@ -13,7 +13,6 @@ fn main() {
     let window = WindowBuilder::new()
         .with_title(NAME)
         .with_inner_size(LogicalSize::new(f64::from(WIDTH), f64::from(HEIGHT)))
-        .with_resizable(false)
         .build(&event_loop)
         .expect("Failed to create window.");
 
