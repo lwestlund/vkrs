@@ -1,5 +1,6 @@
 use super::swapchain;
 use super::validation;
+use super::vertex::Vertex;
 use super::vulkan;
 
 use ash::vk;
@@ -13,6 +14,21 @@ const VERSION_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 const VERSION_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
 const MAX_FRAMES_IN_FLIGHT: u32 = 2;
+
+const VERTICES: [Vertex; 3] = [
+    Vertex {
+        pos: [0.0, -0.5],
+        color: [1.0, 0.0, 0.0],
+    },
+    Vertex {
+        pos: [0.5, 0.5],
+        color: [0.0, 1.0, 0.0],
+    },
+    Vertex {
+        pos: [-0.5, 0.5],
+        color: [0.0, 0.0, 1.0],
+    },
+];
 
 pub struct App {
     _entry: ash::Entry,
@@ -36,6 +52,8 @@ pub struct App {
     pipeline_layout: vk::PipelineLayout,
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
+    vertex_buffer: vk::Buffer,
+    vertex_buffer_memory: vk::DeviceMemory,
     command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -107,6 +125,10 @@ impl App {
 
         let command_pool =
             vulkan::create_command_pool(&device, &instance, &surface_fn, surface, physical_device);
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+        let (vertex_buffer, vertex_buffer_memory) =
+            vulkan::create_vertex_buffer(&device, memory_properties, &VERTICES);
         let command_buffers =
             vulkan::create_command_buffers(&device, command_pool, MAX_FRAMES_IN_FLIGHT);
 
@@ -135,6 +157,8 @@ impl App {
             pipeline_layout,
             swapchain_framebuffers,
             command_pool,
+            vertex_buffer,
+            vertex_buffer_memory,
             command_buffers,
             image_available_semaphores,
             render_finished_semaphores,
@@ -222,6 +246,8 @@ impl App {
             frame_buffer,
             self.swapchain_extent,
             self.graphics_pipeline,
+            VERTICES.len() as _,
+            self.vertex_buffer,
         );
 
         let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
@@ -317,6 +343,8 @@ impl App {
 
     fn destroy_vulkan(&self) {
         unsafe {
+            self.device.destroy_buffer(self.vertex_buffer, None);
+            self.device.free_memory(self.vertex_buffer_memory, None);
             self.image_available_semaphores.iter().for_each(|s| {
                 self.device.destroy_semaphore(*s, None);
             });

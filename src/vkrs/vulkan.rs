@@ -3,9 +3,11 @@ use super::queue_family_indices::QueueFamilyIndices;
 use super::shader;
 use super::swapchain;
 use super::validation;
+use super::vertex::Vertex;
 
 use ash::vk;
 
+use std::mem::size_of;
 use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_void},
@@ -342,9 +344,11 @@ pub fn create_graphics_pipeline(
 
     // Fixed function configuration.
     // Vertex input.
+    let vertex_binding_descriptions = [Vertex::get_binding_description()];
+    let vertex_attribute_descriptions = Vertex::get_attribute_descriptions();
     let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder()
-        // .vertex_binding_descriptions(&[]) // Empty because vertices are hard coded in shader.
-        // .vertex_attribute_descriptions(&[]) // Empty because vertices are hard coded in shader.
+        .vertex_binding_descriptions(&vertex_binding_descriptions)
+        .vertex_attribute_descriptions(&vertex_attribute_descriptions)
         .build();
 
     // Input assembly.
@@ -480,6 +484,77 @@ pub fn create_command_pool(
     unsafe { device.create_command_pool(&pool_info, None).unwrap() }
 }
 
+fn find_memory_type(
+    memory_requirements: vk::MemoryRequirements,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    required_properties: vk::MemoryPropertyFlags,
+) -> u32 {
+    for i in 0..memory_properties.memory_type_count {
+        if memory_requirements.memory_type_bits & (1 << i) != 0
+            && (memory_properties.memory_types[i as usize].property_flags & required_properties)
+                == required_properties
+        {
+            return i;
+        }
+    }
+    panic!("Failed to find a suitable memory type.")
+}
+
+pub fn create_vertex_buffer(
+    device: &ash::Device,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    vertices: &[Vertex],
+) -> (vk::Buffer, vk::DeviceMemory) {
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size((size_of::<Vertex>() * vertices.len()) as u64)
+        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+    let vertex_buffer = unsafe {
+        device
+            .create_buffer(&buffer_info, None)
+            .expect("Failed to create vertex buffer.")
+    };
+
+    let memory_requirements = unsafe { device.get_buffer_memory_requirements(vertex_buffer) };
+    let memory_type = find_memory_type(
+        memory_requirements,
+        memory_properties,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    );
+
+    let alloc_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(memory_requirements.size)
+        .memory_type_index(memory_type);
+    let vertex_buffer_memory = unsafe {
+        device
+            .allocate_memory(&alloc_info, None)
+            .expect("Failed to allocate vertex buffer memory.")
+    };
+
+    unsafe {
+        device
+            .bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0)
+            .expect("Failed to bind vertex buffer memory.");
+        let data = device
+            .map_memory(
+                vertex_buffer_memory,
+                0,
+                buffer_info.size,
+                vk::MemoryMapFlags::empty(),
+            )
+            .expect("Failed to map vertex buffer memory.");
+        let mut align = ash::util::Align::new(
+            data,
+            std::mem::align_of::<f32>() as _,
+            memory_requirements.size,
+        );
+        align.copy_from_slice(vertices);
+        device.unmap_memory(vertex_buffer_memory);
+    }
+
+    (vertex_buffer, vertex_buffer_memory)
+}
+
 pub fn create_command_buffers(
     device: &ash::Device,
     command_pool: vk::CommandPool,
@@ -500,6 +575,8 @@ pub fn record_command_buffer(
     framebuffer: vk::Framebuffer,
     swapchain_extent: vk::Extent2D,
     graphics_pipeline: vk::Pipeline,
+    num_vertices: u32,
+    vertex_buffer: vk::Buffer,
 ) {
     // Begin the command buffer.
     let begin_info = vk::CommandBufferBeginInfo::builder().build();
@@ -527,26 +604,24 @@ pub fn record_command_buffer(
             command_buffer,
             &render_pass_info,
             vk::SubpassContents::INLINE,
-        )
-    };
+        );
 
-    unsafe {
         device.cmd_bind_pipeline(
             command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
             graphics_pipeline,
-        )
-    }
+        );
 
-    unsafe {
-        device.cmd_draw(command_buffer, 3, 1, 0, 0);
-    }
+        let vertex_buffers = [vertex_buffer];
+        let offsets = [0];
+        device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets);
 
-    unsafe {
+        device.cmd_draw(command_buffer, num_vertices, 1, 0, 0);
+
         device.cmd_end_render_pass(command_buffer);
-    }
 
-    unsafe { device.end_command_buffer(command_buffer).unwrap() };
+        device.end_command_buffer(command_buffer).unwrap();
+    }
 }
 
 pub fn create_sync_objects(
