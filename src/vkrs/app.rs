@@ -54,6 +54,7 @@ pub struct App {
     pipeline_layout: vk::PipelineLayout,
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
+    transient_command_pool: vk::CommandPool,
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
     command_buffers: Vec<vk::CommandBuffer>,
@@ -126,12 +127,25 @@ impl App {
             swapchain_extent,
         );
 
-        let command_pool =
-            vulkan::create_command_pool(&device, &instance, &surface_fn, surface, physical_device);
+        let command_pool = vulkan::create_command_pool(
+            &device,
+            vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+            &queue_family_indices,
+        );
+        let transient_command_pool = vulkan::create_command_pool(
+            &device,
+            vk::CommandPoolCreateFlags::TRANSIENT,
+            &queue_family_indices,
+        );
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
-        let (vertex_buffer, vertex_buffer_memory) =
-            vulkan::create_vertex_buffer(&device, memory_properties, &VERTICES);
+        let (vertex_buffer, vertex_buffer_memory) = vulkan::create_vertex_buffer(
+            &device,
+            memory_properties,
+            graphics_queue,
+            transient_command_pool,
+            &VERTICES,
+        );
         let command_buffers =
             vulkan::create_command_buffers(&device, command_pool, MAX_FRAMES_IN_FLIGHT);
 
@@ -161,6 +175,7 @@ impl App {
             pipeline_layout,
             swapchain_framebuffers,
             command_pool,
+            transient_command_pool,
             vertex_buffer,
             vertex_buffer_memory,
             command_buffers,
@@ -359,6 +374,8 @@ impl App {
             self.in_flight_fences.iter().for_each(|f| {
                 self.device.destroy_fence(*f, None);
             });
+            self.device
+                .destroy_command_pool(self.transient_command_pool, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.cleanup_swapchain(DestroyOldSwapchain::Yes);
             self.device.destroy_device(None);

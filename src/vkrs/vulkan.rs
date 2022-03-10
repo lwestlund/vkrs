@@ -468,10 +468,11 @@ pub fn create_framebuffers(
 
 pub fn create_command_pool(
     device: &ash::Device,
+    command_pool_create_flags: vk::CommandPoolCreateFlags,
     queue_family_indices: &QueueFamilyIndices,
 ) -> vk::CommandPool {
     let pool_info = vk::CommandPoolCreateInfo::builder()
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+        .flags(command_pool_create_flags)
         .queue_family_index(queue_family_indices.graphics_family.unwrap());
 
     unsafe { device.create_command_pool(&pool_info, None).unwrap() }
@@ -493,56 +494,150 @@ fn find_memory_type(
     panic!("Failed to find a suitable memory type.")
 }
 
-pub fn create_vertex_buffer(
+fn create_buffer(
     device: &ash::Device,
-    memory_properties: vk::PhysicalDeviceMemoryProperties,
-    vertices: &[Vertex],
-) -> (vk::Buffer, vk::DeviceMemory) {
+    device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    size: vk::DeviceSize,
+    usage_flags: vk::BufferUsageFlags,
+    memory_property_flags: vk::MemoryPropertyFlags,
+) -> (vk::Buffer, vk::DeviceMemory, vk::DeviceSize) {
     let buffer_info = vk::BufferCreateInfo::builder()
-        .size((size_of::<Vertex>() * vertices.len()) as u64)
-        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+        .size(size)
+        .usage(usage_flags)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-    let vertex_buffer = unsafe {
+    let buffer = unsafe {
         device
             .create_buffer(&buffer_info, None)
-            .expect("Failed to create vertex buffer.")
+            .expect("Failed to create buffer.")
     };
 
-    let memory_requirements = unsafe { device.get_buffer_memory_requirements(vertex_buffer) };
+    let memory_requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
     let memory_type = find_memory_type(
         memory_requirements,
-        memory_properties,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        device_memory_properties,
+        memory_property_flags,
     );
 
     let alloc_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(memory_requirements.size)
         .memory_type_index(memory_type);
-    let vertex_buffer_memory = unsafe {
+    let buffer_memory = unsafe {
         device
             .allocate_memory(&alloc_info, None)
-            .expect("Failed to allocate vertex buffer memory.")
+            .expect("Failed to allocate buffer memory.")
     };
 
     unsafe {
         device
-            .bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0)
-            .expect("Failed to bind vertex buffer memory.");
+            .bind_buffer_memory(buffer, buffer_memory, 0)
+            .expect("Failed to bind buffer memory.");
+    }
+
+    (buffer, buffer_memory, memory_requirements.size)
+}
+
+fn copy_buffer(
+    device: &ash::Device,
+    command_pool: vk::CommandPool,
+    transfer_queue: vk::Queue,
+    src: vk::Buffer,
+    dst: vk::Buffer,
+    size: vk::DeviceSize,
+) {
+    let command_buffers = create_command_buffers(&device, command_pool, 1);
+    let command_buffer = command_buffers[0];
+
+    let begin_info =
+        vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    unsafe {
+        device
+            .begin_command_buffer(command_buffer, &begin_info)
+            .unwrap();
+    }
+
+    let copy_region = vk::BufferCopy::builder()
+        .src_offset(0)
+        .dst_offset(0)
+        .size(size)
+        .build();
+    let regions = [copy_region];
+    unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &regions) }
+
+    unsafe {
+        device.end_command_buffer(command_buffer).unwrap();
+    }
+
+    let submit_info = vk::SubmitInfo::builder()
+        .command_buffers(&command_buffers)
+        .build();
+    let submit_infos = [submit_info];
+    unsafe {
+        device
+            .queue_submit(transfer_queue, &submit_infos, vk::Fence::null())
+            .unwrap();
+        device.queue_wait_idle(transfer_queue).unwrap();
+    }
+
+    unsafe {
+        device.free_command_buffers(command_pool, &command_buffers);
+    }
+}
+
+pub fn create_vertex_buffer(
+    device: &ash::Device,
+    device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    transfer_queue: vk::Queue,
+    command_pool: vk::CommandPool,
+    vertices: &[Vertex],
+) -> (vk::Buffer, vk::DeviceMemory) {
+    let buffer_size = (size_of::<Vertex>() * vertices.len()) as vk::DeviceSize;
+
+    // TODO(lovew): Instead of creating a buffer here we could have implemented a memory allocator
+    // that we would request memory from, and it would give us a chunk of memory that was bound to
+    // a buffer and mapped to some host memory.
+    let (staging_buffer, staging_buffer_memory, staging_memory_size) = create_buffer(
+        device,
+        device_memory_properties,
+        buffer_size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    );
+
+    unsafe {
         let data = device
             .map_memory(
-                vertex_buffer_memory,
+                staging_buffer_memory,
                 0,
-                buffer_info.size,
+                buffer_size,
                 vk::MemoryMapFlags::empty(),
             )
             .expect("Failed to map vertex buffer memory.");
-        let mut align = ash::util::Align::new(
-            data,
-            std::mem::align_of::<f32>() as _,
-            memory_requirements.size,
-        );
+        let mut align =
+            ash::util::Align::new(data, std::mem::align_of::<f32>() as _, staging_memory_size);
         align.copy_from_slice(vertices);
-        device.unmap_memory(vertex_buffer_memory);
+        device.unmap_memory(staging_buffer_memory);
+    }
+
+    let (vertex_buffer, vertex_buffer_memory, _) = create_buffer(
+        device,
+        device_memory_properties,
+        buffer_size,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    );
+
+    copy_buffer(
+        device,
+        command_pool,
+        transfer_queue,
+        staging_buffer,
+        vertex_buffer,
+        buffer_size,
+    );
+
+    unsafe {
+        device.destroy_buffer(staging_buffer, None);
+        device.free_memory(staging_buffer_memory, None);
     }
 
     (vertex_buffer, vertex_buffer_memory)
@@ -551,12 +646,12 @@ pub fn create_vertex_buffer(
 pub fn create_command_buffers(
     device: &ash::Device,
     command_pool: vk::CommandPool,
-    max_frames_in_flight: u32,
+    num_command_buffers: u32,
 ) -> Vec<vk::CommandBuffer> {
     let alloc_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(max_frames_in_flight);
+        .command_buffer_count(num_command_buffers);
 
     unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
 }
