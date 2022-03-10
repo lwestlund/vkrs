@@ -134,20 +134,20 @@ fn rate_physical_device(
     surface_fn: &ash::extensions::khr::Surface,
     surface: vk::SurfaceKHR,
     device: vk::PhysicalDevice,
-) -> u32 {
+) -> (u32, Option<QueueFamilyIndices>) {
     let device_featues = unsafe { instance.get_physical_device_features(device) };
     if device_featues.geometry_shader != 1 {
-        return 0;
+        return (0, None);
     }
 
     let indices = QueueFamilyIndices::find_queue_families(instance, surface_fn, surface, device);
     if !indices.is_complete() {
-        return 0;
+        return (0, None);
     }
 
     let device_extension_support = extensions::check_device_extension_support(instance, device);
     if !device_extension_support {
-        return 0;
+        return (0, None);
     }
 
     // Can only get swapchain support details after we have verified device extension support for it.
@@ -155,7 +155,7 @@ fn rate_physical_device(
     if swapchain_support_details.formats.is_empty()
         || swapchain_support_details.present_modes.is_empty()
     {
-        return 0;
+        return (0, None);
     }
 
     let mut score = 0;
@@ -167,14 +167,14 @@ fn rate_physical_device(
     }
     score += device_properties.limits.max_image_dimension2_d;
 
-    score
+    (score, Some(indices))
 }
 
 pub fn select_physical_device(
     instance: &ash::Instance,
     surface_fn: &ash::extensions::khr::Surface,
     surface: vk::SurfaceKHR,
-) -> vk::PhysicalDevice {
+) -> (vk::PhysicalDevice, QueueFamilyIndices) {
     let devices = unsafe {
         instance
             .enumerate_physical_devices()
@@ -195,34 +195,33 @@ pub fn select_physical_device(
 
     let mut best_device_idx = 0;
     let mut max_score = 0;
+    let mut queue_family_indices = QueueFamilyIndices::new();
     for (idx, device) in devices.iter().enumerate() {
-        let score = rate_physical_device(instance, surface_fn, surface, *device);
-        if score > max_score {
+        let (score, indices) = rate_physical_device(instance, surface_fn, surface, *device);
+        if score > max_score && indices.is_some() {
             best_device_idx = idx;
             max_score = score;
+            queue_family_indices = indices.unwrap();
         }
     }
 
-    if max_score > 0 {
+    if max_score > 0 && queue_family_indices.is_complete() {
         let best_device = devices[best_device_idx];
         let properties = unsafe { instance.get_physical_device_properties(best_device) };
         log::debug!(target: "vulkan",
                     "Selected device {:?} with score {}",
                     unsafe { CStr::from_ptr(properties.device_name.as_ptr()) },
                     max_score);
-        return best_device;
+        return (best_device, queue_family_indices);
     }
     panic!("Failed to find a suitable device.");
 }
 
 pub fn create_logical_device_with_graphics_and_present_queue(
     instance: &ash::Instance,
-    surface_fn: &ash::extensions::khr::Surface,
-    surface: vk::SurfaceKHR,
+    queue_family_indices: &QueueFamilyIndices,
     physical_device: vk::PhysicalDevice,
 ) -> (ash::Device, vk::Queue, vk::Queue) {
-    let queue_family_indices =
-        QueueFamilyIndices::find_queue_families(instance, surface_fn, surface, physical_device);
     let queue_priorities = [1.0f32];
     let graphics_family_index = queue_family_indices.graphics_family.unwrap();
     let present_family_index = queue_family_indices.present_family.unwrap();
@@ -469,14 +468,8 @@ pub fn create_framebuffers(
 
 pub fn create_command_pool(
     device: &ash::Device,
-    instance: &ash::Instance,
-    surface_fn: &ash::extensions::khr::Surface,
-    surface: vk::SurfaceKHR,
-    physical_device: vk::PhysicalDevice,
+    queue_family_indices: &QueueFamilyIndices,
 ) -> vk::CommandPool {
-    let queue_family_indices =
-        QueueFamilyIndices::find_queue_families(instance, surface_fn, surface, physical_device);
-
     let pool_info = vk::CommandPoolCreateInfo::builder()
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(queue_family_indices.graphics_family.unwrap());

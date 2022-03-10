@@ -105,6 +105,7 @@ pub fn create_swapchain_and_images(
     device: &ash::Device,
     surface_fn: &ash::extensions::khr::Surface,
     surface: vk::SurfaceKHR,
+    queue_family_indices: &QueueFamilyIndices,
     window_size: &winit::dpi::PhysicalSize<u32>,
     old_swapchain_khr: Option<vk::SwapchainKHR>,
 ) -> (
@@ -139,10 +140,8 @@ pub fn create_swapchain_and_images(
                 properties.extent,
                 image_count);
 
-    let queue_indices =
-        QueueFamilyIndices::find_queue_families(instance, surface_fn, surface, physical_device);
-    let graphics_index = queue_indices.graphics_family.unwrap();
-    let present_index = queue_indices.present_family.unwrap();
+    let graphics_index = queue_family_indices.graphics_family.unwrap();
+    let present_index = queue_family_indices.present_family.unwrap();
     let queue_family_indices = [graphics_index, present_index];
 
     let create_info = {

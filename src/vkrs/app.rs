@@ -1,3 +1,4 @@
+use super::queue_family_indices::QueueFamilyIndices;
 use super::swapchain;
 use super::validation;
 use super::vertex::Vertex;
@@ -39,6 +40,7 @@ pub struct App {
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
     device: ash::Device,
+    queue_family_indices: QueueFamilyIndices,
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
     swapchain: ash::extensions::khr::Swapchain,
@@ -91,12 +93,12 @@ impl App {
             ash_window::create_surface(&entry, &instance, window, None)
                 .expect("Failed to create surface")
         };
-        let physical_device = vulkan::select_physical_device(&instance, &surface_fn, surface);
+        let (physical_device, queue_family_indices) =
+            vulkan::select_physical_device(&instance, &surface_fn, surface);
         let (device, graphics_queue, present_queue) =
             vulkan::create_logical_device_with_graphics_and_present_queue(
                 &instance,
-                &surface_fn,
-                surface,
+                &queue_family_indices,
                 physical_device,
             );
         let (swapchain, swapchain_khr, swapchain_image_format, swapchain_extent, swapchain_images) =
@@ -106,6 +108,7 @@ impl App {
                 &device,
                 &surface_fn,
                 surface,
+                &queue_family_indices,
                 &window.inner_size(),
                 None,
             );
@@ -143,6 +146,7 @@ impl App {
             surface,
             debug_messenger,
             physical_device,
+            queue_family_indices,
             device,
             graphics_queue,
             present_queue,
@@ -179,6 +183,7 @@ impl App {
                 &self.device,
                 &self.surface_fn,
                 self.surface,
+                &self.queue_family_indices,
                 window_size,
                 Some(self.swapchain_khr),
             );
