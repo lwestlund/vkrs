@@ -16,20 +16,26 @@ const VERSION_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
 const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
-const VERTICES: [Vertex; 3] = [
+const VERTICES: [Vertex; 4] = [
     Vertex {
-        pos: [0.0, -0.5],
+        pos: [-0.5, -0.5],
         color: [1.0, 0.0, 0.0],
     },
     Vertex {
-        pos: [0.5, 0.5],
+        pos: [0.5, -0.5],
         color: [0.0, 1.0, 0.0],
     },
     Vertex {
-        pos: [-0.5, 0.5],
+        pos: [0.5, 0.5],
         color: [0.0, 0.0, 1.0],
     },
+    Vertex {
+        pos: [-0.5, 0.5],
+        color: [1.0, 1.0, 1.0],
+    },
 ];
+
+const INDICES: [u16; 6] = [0, 1, 2, 2, 3, 0];
 
 pub struct App {
     _entry: ash::Entry,
@@ -57,6 +63,8 @@ pub struct App {
     transient_command_pool: vk::CommandPool,
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
+    index_buffer: vk::Buffer,
+    index_buffer_memory: vk::DeviceMemory,
     command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -146,6 +154,16 @@ impl App {
             transient_command_pool,
             &VERTICES,
         );
+        // TODO(lovew): Instead of allocating a separate buffer for vertex indices we should have
+        // allocated only a single buffer and simply used an offset into it to store vertex indices
+        // in the same memory after the vertices themselves.
+        let (index_buffer, index_buffer_memory) = vulkan::create_index_buffer(
+            &device,
+            memory_properties,
+            graphics_queue,
+            transient_command_pool,
+            &INDICES,
+        );
         let command_buffers =
             vulkan::create_command_buffers(&device, command_pool, MAX_FRAMES_IN_FLIGHT);
 
@@ -178,6 +196,8 @@ impl App {
             transient_command_pool,
             vertex_buffer,
             vertex_buffer_memory,
+            index_buffer,
+            index_buffer_memory,
             command_buffers,
             image_available_semaphores,
             render_finished_semaphores,
@@ -266,8 +286,9 @@ impl App {
             frame_buffer,
             self.swapchain_extent,
             self.graphics_pipeline,
-            VERTICES.len() as _,
             self.vertex_buffer,
+            self.index_buffer,
+            INDICES.len() as _,
         );
 
         let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
@@ -363,6 +384,8 @@ impl App {
 
     fn destroy_vulkan(&self) {
         unsafe {
+            self.device.destroy_buffer(self.index_buffer, None);
+            self.device.free_memory(self.index_buffer_memory, None);
             self.device.destroy_buffer(self.vertex_buffer, None);
             self.device.free_memory(self.vertex_buffer_memory, None);
             self.image_available_semaphores.iter().for_each(|s| {

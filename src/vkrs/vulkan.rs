@@ -7,7 +7,6 @@ use super::vertex::Vertex;
 
 use ash::vk;
 
-use std::mem::size_of;
 use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_void},
@@ -583,14 +582,15 @@ fn copy_buffer(
     }
 }
 
-pub fn create_vertex_buffer(
+fn create_device_local_buffer_with_data<A, T: Copy>(
     device: &ash::Device,
     device_memory_properties: vk::PhysicalDeviceMemoryProperties,
-    transfer_queue: vk::Queue,
     command_pool: vk::CommandPool,
-    vertices: &[Vertex],
+    transfer_queue: vk::Queue,
+    buffer_usage_flags: vk::BufferUsageFlags,
+    data: &[T],
 ) -> (vk::Buffer, vk::DeviceMemory) {
-    let buffer_size = (size_of::<Vertex>() * vertices.len()) as vk::DeviceSize;
+    let buffer_size = (std::mem::size_of::<T>() * data.len()) as vk::DeviceSize;
 
     // TODO(lovew): Instead of creating a buffer here we could have implemented a memory allocator
     // that we would request memory from, and it would give us a chunk of memory that was bound to
@@ -604,25 +604,28 @@ pub fn create_vertex_buffer(
     );
 
     unsafe {
-        let data = device
+        let data_ptr = device
             .map_memory(
                 staging_buffer_memory,
                 0,
                 buffer_size,
                 vk::MemoryMapFlags::empty(),
             )
-            .expect("Failed to map vertex buffer memory.");
-        let mut align =
-            ash::util::Align::new(data, std::mem::align_of::<f32>() as _, staging_memory_size);
-        align.copy_from_slice(vertices);
+            .expect("Failed to map staging buffer memory.");
+        let mut align = ash::util::Align::new(
+            data_ptr,
+            std::mem::align_of::<A>() as _,
+            staging_memory_size,
+        );
+        align.copy_from_slice(data);
         device.unmap_memory(staging_buffer_memory);
     }
 
-    let (vertex_buffer, vertex_buffer_memory, _) = create_buffer(
+    let (buffer, buffer_memory, _) = create_buffer(
         device,
         device_memory_properties,
         buffer_size,
-        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
+        vk::BufferUsageFlags::TRANSFER_DST | buffer_usage_flags,
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     );
 
@@ -631,7 +634,7 @@ pub fn create_vertex_buffer(
         command_pool,
         transfer_queue,
         staging_buffer,
-        vertex_buffer,
+        buffer,
         buffer_size,
     );
 
@@ -640,7 +643,41 @@ pub fn create_vertex_buffer(
         device.free_memory(staging_buffer_memory, None);
     }
 
-    (vertex_buffer, vertex_buffer_memory)
+    (buffer, buffer_memory)
+}
+
+pub fn create_vertex_buffer(
+    device: &ash::Device,
+    device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    transfer_queue: vk::Queue,
+    command_pool: vk::CommandPool,
+    vertices: &[Vertex],
+) -> (vk::Buffer, vk::DeviceMemory) {
+    create_device_local_buffer_with_data::<f32, _>(
+        &device,
+        device_memory_properties,
+        command_pool,
+        transfer_queue,
+        vk::BufferUsageFlags::VERTEX_BUFFER,
+        vertices,
+    )
+}
+
+pub fn create_index_buffer(
+    device: &ash::Device,
+    device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    transfer_queue: vk::Queue,
+    command_pool: vk::CommandPool,
+    indices: &[u16],
+) -> (vk::Buffer, vk::DeviceMemory) {
+    create_device_local_buffer_with_data::<u16, _>(
+        &device,
+        device_memory_properties,
+        command_pool,
+        transfer_queue,
+        vk::BufferUsageFlags::INDEX_BUFFER,
+        indices,
+    )
 }
 
 pub fn create_command_buffers(
@@ -663,8 +700,9 @@ pub fn record_command_buffer(
     framebuffer: vk::Framebuffer,
     swapchain_extent: vk::Extent2D,
     graphics_pipeline: vk::Pipeline,
-    num_vertices: u32,
     vertex_buffer: vk::Buffer,
+    index_buffer: vk::Buffer,
+    num_vertex_indices: u32,
 ) {
     // Begin the command buffer.
     let begin_info = vk::CommandBufferBeginInfo::builder().build();
@@ -704,7 +742,9 @@ pub fn record_command_buffer(
         let offsets = [0];
         device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets);
 
-        device.cmd_draw(command_buffer, num_vertices, 1, 0, 0);
+        device.cmd_bind_index_buffer(command_buffer, index_buffer, 0, vk::IndexType::UINT16);
+
+        device.cmd_draw_indexed(command_buffer, num_vertex_indices, 1, 0, 0, 0);
 
         device.cmd_end_render_pass(command_buffer);
 
