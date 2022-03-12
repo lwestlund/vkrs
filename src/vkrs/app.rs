@@ -5,6 +5,7 @@ use super::vertex::Vertex;
 use super::vulkan;
 
 use ash::vk;
+use glam::{const_vec2, const_vec3};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -18,20 +19,20 @@ const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
 const VERTICES: [Vertex; 4] = [
     Vertex {
-        pos: [-0.5, -0.5],
-        color: [1.0, 0.0, 0.0],
+        pos: const_vec2!([-0.5, -0.5]),
+        color: const_vec3!([1.0, 0.0, 0.0]),
     },
     Vertex {
-        pos: [0.5, -0.5],
-        color: [0.0, 1.0, 0.0],
+        pos: const_vec2!([0.5, -0.5]),
+        color: const_vec3!([0.0, 1.0, 0.0]),
     },
     Vertex {
-        pos: [0.5, 0.5],
-        color: [0.0, 0.0, 1.0],
+        pos: const_vec2!([0.5, 0.5]),
+        color: const_vec3!([0.0, 0.0, 1.0]),
     },
     Vertex {
-        pos: [-0.5, 0.5],
-        color: [1.0, 1.0, 1.0],
+        pos: const_vec2!([-0.5, 0.5]),
+        color: const_vec3!([1.0, 1.0, 1.0]),
     },
 ];
 

@@ -1,11 +1,13 @@
+use glam::{Vec2, Vec3};
+use memoffset::offset_of;
 use std::mem::size_of;
 
 use ash::vk;
 
 #[derive(Clone, Copy)]
 pub struct Vertex {
-    pub pos: [f32; 2],
-    pub color: [f32; 3],
+    pub pos: Vec2,
+    pub color: Vec3,
 }
 
 impl Vertex {
@@ -22,13 +24,13 @@ impl Vertex {
             .binding(0)
             .location(0)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset(0)
+            .offset(offset_of!(Vertex, pos) as _)
             .build();
         let color_desc = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(2 * size_of::<f32>() as u32)
+            .offset(offset_of!(Vertex, color) as _)
             .build();
         [position_desc, color_desc]
     }
