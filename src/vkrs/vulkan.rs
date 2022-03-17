@@ -2,6 +2,7 @@ use super::extensions;
 use super::queue_family_indices::QueueFamilyIndices;
 use super::shader;
 use super::swapchain;
+use super::uniform_buffer_object::UniformBufferObject;
 use super::validation;
 use super::vertex::Vertex;
 
@@ -318,6 +319,7 @@ pub fn create_graphics_pipeline(
     device: &ash::Device,
     swapchain_extent: vk::Extent2D,
     render_pass: vk::RenderPass,
+    descriptor_set_layout: vk::DescriptorSetLayout,
 ) -> (vk::Pipeline, vk::PipelineLayout) {
     let out_dir = PathBuf::from("src/vkrs/shaders");
     let vertex_shader_code = shader::read_shader_file(&out_dir.join("shader.vert.spv"));
@@ -410,7 +412,8 @@ pub fn create_graphics_pipeline(
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
     // Pipeline layout.
-    let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder().build();
+    let set_layouts = [descriptor_set_layout];
+    let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts);
     let pipeline_layout = unsafe {
         device
             .create_pipeline_layout(&pipeline_layout_info, None)
@@ -797,4 +800,46 @@ pub fn create_sync_objects(
         render_finished_semaphores,
         in_flight_fences,
     )
+}
+
+pub fn create_descriptor_set_layout(device: &ash::Device) -> vk::DescriptorSetLayout {
+    let ubo_layout_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .build();
+    let bindings = [ubo_layout_binding];
+    let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+
+    unsafe {
+        device
+            .create_descriptor_set_layout(&layout_info, None)
+            .expect("Failed to create descriptor set layout.")
+    }
+}
+
+pub fn create_uniform_buffers(
+    device: &ash::Device,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    num_buffers: u32,
+) -> (Vec<vk::Buffer>, Vec<vk::DeviceMemory>) {
+    let buffer_size = std::mem::size_of::<UniformBufferObject>() as vk::DeviceSize;
+
+    let mut buffers = Vec::new();
+    let mut buffer_memories = Vec::new();
+
+    for _ in 0..num_buffers {
+        let (buffer, buffer_memory, _) = create_buffer(
+            device,
+            memory_properties,
+            buffer_size,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        );
+        buffers.push(buffer);
+        buffer_memories.push(buffer_memory);
+    }
+
+    (buffers, buffer_memories)
 }

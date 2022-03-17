@@ -1,11 +1,16 @@
 use super::queue_family_indices::QueueFamilyIndices;
 use super::swapchain;
+use super::uniform_buffer_object::UniformBufferObject;
 use super::validation;
 use super::vertex::Vertex;
 use super::vulkan;
 
 use ash::vk;
-use glam::{const_vec2, const_vec3};
+use glam::{const_vec2, const_vec3, Mat4};
+use std::{
+    mem::{align_of, size_of},
+    time::Instant,
+};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -39,6 +44,7 @@ const VERTICES: [Vertex; 4] = [
 const INDICES: [u16; 6] = [0, 1, 2, 2, 3, 0];
 
 pub struct App {
+    start_instant: Instant,
     _entry: ash::Entry,
     instance: ash::Instance,
     debug_utils_loader: ash::extensions::ext::DebugUtils,
@@ -57,15 +63,19 @@ pub struct App {
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     render_pass: vk::RenderPass,
+    descriptor_set_layout: vk::DescriptorSetLayout,
     graphics_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
     transient_command_pool: vk::CommandPool,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
+    uniform_buffers: Vec<vk::Buffer>,
+    uniform_buffer_memories: Vec<vk::DeviceMemory>,
     command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -126,8 +136,13 @@ impl App {
             swapchain::create_image_views(&device, &swapchain_images, swapchain_image_format);
 
         let render_pass = vulkan::create_render_pass(&device, swapchain_image_format);
-        let (graphics_pipeline, pipeline_layout) =
-            vulkan::create_graphics_pipeline(&device, swapchain_extent, render_pass);
+        let descriptor_set_layout = vulkan::create_descriptor_set_layout(&device);
+        let (graphics_pipeline, pipeline_layout) = vulkan::create_graphics_pipeline(
+            &device,
+            swapchain_extent,
+            render_pass,
+            descriptor_set_layout,
+        );
 
         let swapchain_framebuffers = vulkan::create_framebuffers(
             &device,
@@ -165,6 +180,10 @@ impl App {
             transient_command_pool,
             &INDICES,
         );
+
+        let (uniform_buffers, uniform_buffer_memories) =
+            vulkan::create_uniform_buffers(&device, memory_properties, swapchain_images.len() as _);
+
         let command_buffers =
             vulkan::create_command_buffers(&device, command_pool, MAX_FRAMES_IN_FLIGHT);
 
@@ -172,6 +191,7 @@ impl App {
             vulkan::create_sync_objects(&device, MAX_FRAMES_IN_FLIGHT);
 
         Self {
+            start_instant: Instant::now(),
             _entry: entry,
             instance,
             debug_utils_loader,
@@ -190,15 +210,19 @@ impl App {
             swapchain_images,
             swapchain_image_views,
             render_pass,
+            descriptor_set_layout,
             graphics_pipeline,
             pipeline_layout,
             swapchain_framebuffers,
             command_pool,
             transient_command_pool,
+            memory_properties,
             vertex_buffer,
             vertex_buffer_memory,
             index_buffer,
             index_buffer_memory,
+            uniform_buffers,
+            uniform_buffer_memories,
             command_buffers,
             image_available_semaphores,
             render_finished_semaphores,
@@ -226,13 +250,22 @@ impl App {
         let swapchain_image_views =
             swapchain::create_image_views(&self.device, &swapchain_images, swapchain_image_format);
         let render_pass = vulkan::create_render_pass(&self.device, swapchain_image_format);
-        let (graphics_pipeline, pipeline_layout) =
-            vulkan::create_graphics_pipeline(&self.device, swapchain_extent, render_pass);
+        let (graphics_pipeline, pipeline_layout) = vulkan::create_graphics_pipeline(
+            &self.device,
+            swapchain_extent,
+            render_pass,
+            self.descriptor_set_layout,
+        );
         let swapchain_framebuffers = vulkan::create_framebuffers(
             &self.device,
             &swapchain_image_views,
             render_pass,
             swapchain_extent,
+        );
+        let (uniform_buffers, uniform_buffer_memories) = vulkan::create_uniform_buffers(
+            &self.device,
+            self.memory_properties,
+            swapchain_images.len() as _,
         );
 
         self.swapchain = swapchain;
@@ -245,6 +278,37 @@ impl App {
         self.graphics_pipeline = graphics_pipeline;
         self.pipeline_layout = pipeline_layout;
         self.swapchain_framebuffers = swapchain_framebuffers;
+        self.uniform_buffers = uniform_buffers;
+        self.uniform_buffer_memories = uniform_buffer_memories;
+    }
+
+    fn update_uniform_buffer(&self, image_index: u32) {
+        let elapsed = self.start_instant.elapsed().as_secs_f32();
+
+        let aspect_ratio = self.swapchain_extent.width as f32 / self.swapchain_extent.height as f32;
+        let model = Mat4::from_rotation_z(std::f32::consts::FRAC_PI_4 * elapsed);
+        let view = Mat4::look_at_rh(
+            const_vec3!([2.0, 2.0, 2.0]),
+            const_vec3!([0.0, 0.0, 0.0]),
+            const_vec3!([0.0, 0.0, 1.0]),
+        );
+        let mut proj = Mat4::perspective_rh(f32::to_radians(45.0), aspect_ratio, 0.1, 10.0);
+        proj.y_axis.y *= -1.0;
+        let ubo = UniformBufferObject { model, view, proj };
+        let ubos = [ubo];
+
+        // TODO(lovew): Look at replacing this with "push constants".
+        let buffer_memory = self.uniform_buffer_memories[image_index as usize];
+        let size = size_of::<UniformBufferObject>() as vk::DeviceSize;
+        unsafe {
+            let data_ptr = self
+                .device
+                .map_memory(buffer_memory, 0, size, vk::MemoryMapFlags::empty())
+                .unwrap();
+            let mut align = ash::util::Align::new(data_ptr, align_of::<f32>() as _, size);
+            align.copy_from_slice(&ubos);
+            self.device.unmap_memory(buffer_memory);
+        }
     }
 
     fn draw_frame(&mut self) -> RecreateSwapchain {
@@ -268,6 +332,8 @@ impl App {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return RecreateSwapchain::Yes,
             Err(error) => panic!("Error acquiring next image: {:?}", error),
         };
+
+        self.update_uniform_buffer(image_index);
 
         // Reset the fence first when we know there will be work
         // submitted so that it will get signaled again.
@@ -374,6 +440,12 @@ impl App {
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_render_pass(self.render_pass, None);
+            self.uniform_buffers.iter().for_each(|b| {
+                self.device.destroy_buffer(*b, None);
+            });
+            self.uniform_buffer_memories.iter().for_each(|m| {
+                self.device.free_memory(*m, None);
+            });
             self.swapchain_image_views
                 .iter()
                 .for_each(|v| self.device.destroy_image_view(*v, None));
@@ -402,6 +474,8 @@ impl App {
                 .destroy_command_pool(self.transient_command_pool, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.cleanup_swapchain(DestroyOldSwapchain::Yes);
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             self.device.destroy_device(None);
             self.surface_fn.destroy_surface(self.surface, None);
             if validation::ENABLE_VALIDATION_LAYERS {
