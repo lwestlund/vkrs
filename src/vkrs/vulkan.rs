@@ -199,10 +199,12 @@ pub fn select_physical_device(
     let mut queue_family_indices = QueueFamilyIndices::new();
     for (idx, device) in devices.iter().enumerate() {
         let (score, indices) = rate_physical_device(instance, surface_fn, surface, *device);
-        if score > max_score && indices.is_some() {
-            best_device_idx = idx;
-            max_score = score;
-            queue_family_indices = indices.unwrap();
+        if score > max_score {
+            if let Some(indices) = indices {
+                best_device_idx = idx;
+                max_score = score;
+                queue_family_indices = indices;
+            }
         }
     }
 
@@ -547,7 +549,7 @@ fn copy_buffer(
     dst: vk::Buffer,
     size: vk::DeviceSize,
 ) {
-    let command_buffers = create_command_buffers(&device, command_pool, 1);
+    let command_buffers = create_command_buffers(device, command_pool, 1);
     let command_buffer = command_buffers[0];
 
     let begin_info =
@@ -654,7 +656,7 @@ pub fn create_vertex_buffer(
     vertices: &[Vertex],
 ) -> (vk::Buffer, vk::DeviceMemory) {
     create_device_local_buffer_with_data::<f32, _>(
-        &device,
+        device,
         device_memory_properties,
         command_pool,
         transfer_queue,
@@ -671,7 +673,7 @@ pub fn create_index_buffer(
     indices: &[u16],
 ) -> (vk::Buffer, vk::DeviceMemory) {
     create_device_local_buffer_with_data::<u16, _>(
-        &device,
+        device,
         device_memory_properties,
         command_pool,
         transfer_queue,
