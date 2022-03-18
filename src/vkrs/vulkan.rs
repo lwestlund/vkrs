@@ -10,6 +10,7 @@ use ash::vk;
 
 use std::{
     ffi::{CStr, CString},
+    mem::{align_of, size_of},
     os::raw::{c_char, c_void},
     path::PathBuf,
 };
@@ -382,7 +383,7 @@ pub fn create_graphics_pipeline(
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::CLOCKWISE)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(false);
 
     // Multisampling.
@@ -593,7 +594,7 @@ fn create_device_local_buffer_with_data<A, T: Copy>(
     buffer_usage_flags: vk::BufferUsageFlags,
     data: &[T],
 ) -> (vk::Buffer, vk::DeviceMemory) {
-    let buffer_size = (std::mem::size_of::<T>() * data.len()) as vk::DeviceSize;
+    let buffer_size = (size_of::<T>() * data.len()) as vk::DeviceSize;
 
     // TODO(lovew): Instead of creating a buffer here we could have implemented a memory allocator
     // that we would request memory from, and it would give us a chunk of memory that was bound to
@@ -615,11 +616,7 @@ fn create_device_local_buffer_with_data<A, T: Copy>(
                 vk::MemoryMapFlags::empty(),
             )
             .expect("Failed to map staging buffer memory.");
-        let mut align = ash::util::Align::new(
-            data_ptr,
-            std::mem::align_of::<A>() as _,
-            staging_memory_size,
-        );
+        let mut align = ash::util::Align::new(data_ptr, align_of::<A>() as _, staging_memory_size);
         align.copy_from_slice(data);
         device.unmap_memory(staging_buffer_memory);
     }
@@ -706,6 +703,8 @@ pub fn record_command_buffer(
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
     num_vertex_indices: u32,
+    pipeline_layout: vk::PipelineLayout,
+    descriptor_set: vk::DescriptorSet,
 ) {
     // Begin the command buffer.
     let begin_info = vk::CommandBufferBeginInfo::builder().build();
@@ -747,6 +746,16 @@ pub fn record_command_buffer(
 
         device.cmd_bind_index_buffer(command_buffer, index_buffer, 0, vk::IndexType::UINT16);
 
+        let descriptor_sets = [descriptor_set];
+        let dynamic_offsets = [];
+        device.cmd_bind_descriptor_sets(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            pipeline_layout,
+            0,
+            &descriptor_sets,
+            &dynamic_offsets,
+        );
         device.cmd_draw_indexed(command_buffer, num_vertex_indices, 1, 0, 0, 0);
 
         device.cmd_end_render_pass(command_buffer);
@@ -824,7 +833,7 @@ pub fn create_uniform_buffers(
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     num_buffers: u32,
 ) -> (Vec<vk::Buffer>, Vec<vk::DeviceMemory>) {
-    let buffer_size = std::mem::size_of::<UniformBufferObject>() as vk::DeviceSize;
+    let buffer_size = size_of::<UniformBufferObject>() as vk::DeviceSize;
 
     let mut buffers = Vec::new();
     let mut buffer_memories = Vec::new();
@@ -842,4 +851,67 @@ pub fn create_uniform_buffers(
     }
 
     (buffers, buffer_memories)
+}
+
+pub fn create_descriptor_pool(device: &ash::Device, num_descriptors: u32) -> vk::DescriptorPool {
+    let pool_size = vk::DescriptorPoolSize::builder()
+        .ty(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(num_descriptors)
+        .build();
+    let pool_sizes = [pool_size];
+
+    let pool_info = vk::DescriptorPoolCreateInfo::builder()
+        .pool_sizes(&pool_sizes)
+        .max_sets(num_descriptors);
+
+    unsafe {
+        device
+            .create_descriptor_pool(&pool_info, None)
+            .expect("Failed to create descriptor pool.")
+    }
+}
+
+pub fn create_descriptor_sets(
+    device: &ash::Device,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    uniform_buffers: &[vk::Buffer],
+) -> Vec<vk::DescriptorSet> {
+    let layouts = (0..uniform_buffers.len())
+        .map(|_| descriptor_set_layout)
+        .collect::<Vec<_>>();
+    let alloc_info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(&layouts);
+    let descriptor_sets = unsafe {
+        device
+            .allocate_descriptor_sets(&alloc_info)
+            .expect("Failed to allocate descriptor sets.")
+    };
+
+    descriptor_sets
+        .iter()
+        .zip(uniform_buffers.iter())
+        .for_each(|(set, buffer)| {
+            let buffer_info = vk::DescriptorBufferInfo::builder()
+                .buffer(*buffer)
+                .offset(0)
+                .range(size_of::<UniformBufferObject>() as vk::DeviceSize)
+                .build();
+            let buffer_infos = [buffer_info];
+
+            let descriptor_write = vk::WriteDescriptorSet::builder()
+                .dst_set(*set)
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .buffer_info(&buffer_infos)
+                .build();
+            let descriptor_writes = [descriptor_write];
+            let descriptor_copies = [];
+
+            unsafe { device.update_descriptor_sets(&descriptor_writes, &descriptor_copies) }
+        });
+
+    descriptor_sets
 }

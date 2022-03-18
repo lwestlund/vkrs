@@ -76,6 +76,8 @@ pub struct App {
     index_buffer_memory: vk::DeviceMemory,
     uniform_buffers: Vec<vk::Buffer>,
     uniform_buffer_memories: Vec<vk::DeviceMemory>,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_sets: Vec<vk::DescriptorSet>,
     command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -184,6 +186,14 @@ impl App {
         let (uniform_buffers, uniform_buffer_memories) =
             vulkan::create_uniform_buffers(&device, memory_properties, swapchain_images.len() as _);
 
+        let descriptor_pool = vulkan::create_descriptor_pool(&device, swapchain_images.len() as _);
+        let descriptor_sets = vulkan::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            descriptor_set_layout,
+            &uniform_buffers,
+        );
+
         let command_buffers =
             vulkan::create_command_buffers(&device, command_pool, MAX_FRAMES_IN_FLIGHT);
 
@@ -223,6 +233,8 @@ impl App {
             index_buffer_memory,
             uniform_buffers,
             uniform_buffer_memories,
+            descriptor_pool,
+            descriptor_sets,
             command_buffers,
             image_available_semaphores,
             render_finished_semaphores,
@@ -267,6 +279,14 @@ impl App {
             self.memory_properties,
             swapchain_images.len() as _,
         );
+        let descriptor_pool =
+            vulkan::create_descriptor_pool(&self.device, swapchain_images.len() as _);
+        let descriptor_sets = vulkan::create_descriptor_sets(
+            &self.device,
+            descriptor_pool,
+            self.descriptor_set_layout,
+            &uniform_buffers,
+        );
 
         self.swapchain = swapchain;
         self.swapchain_khr = swapchain_khr;
@@ -280,6 +300,8 @@ impl App {
         self.swapchain_framebuffers = swapchain_framebuffers;
         self.uniform_buffers = uniform_buffers;
         self.uniform_buffer_memories = uniform_buffer_memories;
+        self.descriptor_pool = descriptor_pool;
+        self.descriptor_sets = descriptor_sets;
     }
 
     fn update_uniform_buffer(&self, image_index: u32) {
@@ -341,6 +363,7 @@ impl App {
 
         let command_buffer = self.command_buffers[self.current_frame];
         let frame_buffer = self.swapchain_framebuffers[image_index as usize];
+        let descriptor_set = self.descriptor_sets[image_index as usize];
         unsafe {
             self.device
                 .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -356,6 +379,8 @@ impl App {
             self.vertex_buffer,
             self.index_buffer,
             INDICES.len() as _,
+            self.pipeline_layout,
+            descriptor_set,
         );
 
         let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
@@ -446,6 +471,8 @@ impl App {
             self.uniform_buffer_memories.iter().for_each(|m| {
                 self.device.free_memory(*m, None);
             });
+            self.device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
             self.swapchain_image_views
                 .iter()
                 .for_each(|v| self.device.destroy_image_view(*v, None));
